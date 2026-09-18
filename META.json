@@ -1,0 +1,47 @@
+{
+   "name": "pg_debver",
+   "abstract": "A Debian version data type",
+   "description": "A PostgreSQL data type for Debian package version strings in full compliance with the Debian Policy Manual \u00a75.6.12, with support for btree and hash indexing, aggregates, and range types.",
+   "version": "1.0.0",
+   "maintainer": [
+      "Hannu Krosing <hannuk@google.com>"
+   ],
+   "license": "postgresql",
+   "provides": {
+      "pg_debver": {
+         "abstract": "A Debian version data type",
+         "file": "sql/pg_debver--1.0.0.sql",
+         "docfile": "README.md",
+         "version": "1.0.0"
+      },
+      "debversion": {
+         "abstract": "A Debian version data type (compatibility alias)",
+         "file": "sql/debversion--1.0.0.sql",
+         "docfile": "README.md",
+         "version": "1.0.0"
+      }
+   },
+   "prereqs": {
+      "runtime": {
+         "requires": {
+            "PostgreSQL": "9.2.0"
+         }
+      },
+      "test": {
+         "requires": {
+            "plpgsql": 0
+         }
+      }
+   },
+   "meta-spec": {
+      "version": "1.0.0",
+      "url": "https://pgxn.org/meta/spec.txt"
+   },
+   "tags": [
+      "debian",
+      "debversion",
+      "dpkg",
+      "version",
+      "evr"
+   ]
+}
