@@ -64,11 +64,31 @@ Datum get_debversion_epoch(PG_FUNCTION_ARGS);
 Datum get_debversion_upstream(PG_FUNCTION_ARGS);
 Datum get_debversion_revision(PG_FUNCTION_ARGS);
 
+static inline bool
+debver_isspace(unsigned char c)
+{
+    return (c == ' ' || (c >= 9 && c <= 13));
+}
+
+static inline bool
+debver_isdigit(unsigned char c)
+{
+    return (c >= '0' && c <= '9');
+}
+
+static inline bool
+debver_isalnum(unsigned char c)
+{
+    return ((c >= '0' && c <= '9') || (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z'));
+}
+
 static bool
-debversion_validate(const char *str, bool lax, bool throw_error, char **trimmed_out)
+debversion_validate(const char *str, bool lax, bool throw_error, char **canonical_out)
 {
     const char *p = str;
     const char *colon;
+    const char *epoch_start = NULL;
+    size_t epoch_len = 0;
     const char *version_start;
     const char *last_hyphen;
     const char *upstream;
@@ -81,14 +101,14 @@ debversion_validate(const char *str, bool lax, bool throw_error, char **trimmed_
 
     if (lax)
     {
-        while (*p && isspace((unsigned char)*p))
+        while (*p && debver_isspace((unsigned char)*p))
             p++;
     }
 
     len = strlen(p);
     if (lax)
     {
-        while (len > 0 && isspace((unsigned char)p[len - 1]))
+        while (len > 0 && debver_isspace((unsigned char)p[len - 1]))
             len--;
     }
 
@@ -104,7 +124,7 @@ debversion_validate(const char *str, bool lax, bool throw_error, char **trimmed_
 
     if (!lax)
     {
-        if (isspace((unsigned char)str[0]) || isspace((unsigned char)str[strlen(str) - 1]))
+        if (debver_isspace((unsigned char)str[0]) || debver_isspace((unsigned char)str[strlen(str) - 1]))
         {
             if (throw_error)
                 ereport(ERROR,
@@ -120,7 +140,16 @@ debversion_validate(const char *str, bool lax, bool throw_error, char **trimmed_
     colon = memchr(p, ':', len);
     if (colon != NULL)
     {
-        size_t epoch_len = (size_t)(colon - p);
+        epoch_start = p;
+        epoch_len = (size_t)(colon - p);
+
+        /* In lax mode, strip leading 'v' or 'V' before epoch */
+        if (lax && epoch_len > 0 && (*epoch_start == 'v' || *epoch_start == 'V'))
+        {
+            epoch_start++;
+            epoch_len--;
+        }
+
         if (epoch_len == 0)
         {
             if (throw_error)
@@ -133,7 +162,7 @@ debversion_validate(const char *str, bool lax, bool throw_error, char **trimmed_
         }
         for (i = 0; i < epoch_len; i++)
         {
-            if (!isdigit((unsigned char)p[i]))
+            if (!debver_isdigit((unsigned char)epoch_start[i]))
             {
                 if (throw_error)
                     ereport(ERROR,
@@ -146,12 +175,19 @@ debversion_validate(const char *str, bool lax, bool throw_error, char **trimmed_
         }
         has_epoch = true;
         version_start = colon + 1;
-        len = len - (epoch_len + 1);
+        len = len - (size_t)(colon + 1 - p);
     }
     else
     {
         has_epoch = false;
         version_start = p;
+    }
+
+    /* In lax mode, strip leading 'v' or 'V' before upstream version */
+    if (lax && len > 0 && (*version_start == 'v' || *version_start == 'V'))
+    {
+        version_start++;
+        len--;
     }
 
     if (len == 0)
@@ -195,7 +231,7 @@ debversion_validate(const char *str, bool lax, bool throw_error, char **trimmed_
         for (i = 0; i < revision_len; i++)
         {
             unsigned char c = (unsigned char)revision[i];
-            if (!(isalnum(c) || c == '+' || c == '.' || c == '~'))
+            if (!(debver_isalnum(c) || c == '+' || c == '.' || c == '~'))
             {
                 if (throw_error)
                     ereport(ERROR,
@@ -226,26 +262,23 @@ debversion_validate(const char *str, bool lax, bool throw_error, char **trimmed_
         return false;
     }
 
-    /* Upstream version must start with a digit in strict mode */
-    if (!lax)
+    /* Upstream version must start with a digit in both strict and lax modes */
+    if (!debver_isdigit((unsigned char)upstream[0]))
     {
-        if (!isdigit((unsigned char)upstream[0]))
-        {
-            if (throw_error)
-                ereport(ERROR,
-                        (errcode(ERRCODE_INVALID_TEXT_REPRESENTATION),
-                         errmsg("invalid input syntax for type %s: \"%s\"",
-                                "debversion", str),
-                         errdetail("Upstream version must start with a digit.")));
-            return false;
-        }
+        if (throw_error)
+            ereport(ERROR,
+                    (errcode(ERRCODE_INVALID_TEXT_REPRESENTATION),
+                     errmsg("invalid input syntax for type %s: \"%s\"",
+                            "debversion", str),
+                     errdetail("Upstream version must start with a digit.")));
+        return false;
     }
 
     /* Check upstream version characters: alphanumerics, plus, dot, tilde, hyphen, colon */
     for (i = 0; i < upstream_len; i++)
     {
         unsigned char c = (unsigned char)upstream[i];
-        if (!(isalnum(c) || c == '.' || c == '+' || c == '~' || c == '-' || c == ':'))
+        if (!(debver_isalnum(c) || c == '.' || c == '+' || c == '~' || c == '-' || c == ':'))
         {
             if (throw_error)
                 ereport(ERROR,
@@ -277,13 +310,22 @@ debversion_validate(const char *str, bool lax, bool throw_error, char **trimmed_
         }
     }
 
-    if (trimmed_out != NULL)
+    if (canonical_out != NULL)
     {
-        size_t total_len = (size_t)((revision ? (revision + revision_len) : (upstream + upstream_len)) - p);
-        char *t = palloc(total_len + 1);
-        memcpy(t, p, total_len);
-        t[total_len] = '\0';
-        *trimmed_out = t;
+        StringInfoData buf;
+        initStringInfo(&buf);
+        if (has_epoch)
+        {
+            appendBinaryStringInfo(&buf, epoch_start, epoch_len);
+            appendStringInfoChar(&buf, ':');
+        }
+        appendBinaryStringInfo(&buf, upstream, upstream_len);
+        if (revision != NULL)
+        {
+            appendStringInfoChar(&buf, '-');
+            appendBinaryStringInfo(&buf, revision, revision_len);
+        }
+        *canonical_out = buf.data;
     }
 
     return true;
@@ -301,7 +343,7 @@ debversion_normalize_for_hash(const char *str, StringInfo buf)
     /* Normalize epoch: if absent or all zeros -> "0" */
     if (e != NULL)
     {
-        while (el > 1 && *e == '0' && isdigit((unsigned char)e[1]))
+        while (el > 1 && *e == '0' && debver_isdigit((unsigned char)e[1]))
         {
             e++;
             el--;
@@ -318,12 +360,12 @@ debversion_normalize_for_hash(const char *str, StringInfo buf)
     i = 0;
     while (i < ul)
     {
-        if (isdigit((unsigned char)u[i]))
+        if (debver_isdigit((unsigned char)u[i]))
         {
             size_t start = i;
-            while (i < ul && isdigit((unsigned char)u[i]))
+            while (i < ul && debver_isdigit((unsigned char)u[i]))
                 i++;
-            while ((i - start) > 1 && u[start] == '0' && isdigit((unsigned char)u[start + 1]))
+            while ((i - start) > 1 && u[start] == '0' && debver_isdigit((unsigned char)u[start + 1]))
                 start++;
             appendBinaryStringInfo(buf, &u[start], i - start);
         }
@@ -341,12 +383,12 @@ debversion_normalize_for_hash(const char *str, StringInfo buf)
         i = 0;
         while (i < rl)
         {
-            if (isdigit((unsigned char)r[i]))
+            if (debver_isdigit((unsigned char)r[i]))
             {
                 size_t start = i;
-                while (i < rl && isdigit((unsigned char)r[i]))
+                while (i < rl && debver_isdigit((unsigned char)r[i]))
                     i++;
-                while ((i - start) > 1 && r[start] == '0' && isdigit((unsigned char)r[start + 1]))
+                while ((i - start) > 1 && r[start] == '0' && debver_isdigit((unsigned char)r[start + 1]))
                     start++;
                 appendBinaryStringInfo(buf, &r[start], i - start);
             }
@@ -368,10 +410,30 @@ Datum
 debversion_in(PG_FUNCTION_ARGS)
 {
     char *str = PG_GETARG_CSTRING(0);
+    const char *p = str;
+    size_t len;
+    char *trimmed;
     text *result;
 
-    debversion_validate(str, false, true, NULL);
-    result = cstring_to_text(str);
+    while (*p && debver_isspace((unsigned char)*p))
+        p++;
+    len = strlen(p);
+    while (len > 0 && debver_isspace((unsigned char)p[len - 1]))
+        len--;
+
+    if (len == 0)
+    {
+        ereport(ERROR,
+                (errcode(ERRCODE_INVALID_TEXT_REPRESENTATION),
+                 errmsg("invalid input syntax for type %s: \"%s\"",
+                        "debversion", str)));
+    }
+
+    trimmed = pnstrdup(p, len);
+    debversion_validate(trimmed, false, true, NULL);
+    result = cstring_to_text_with_len(trimmed, len);
+    pfree(trimmed);
+
     PG_RETURN_TEXT_P(result);
 }
 
@@ -423,6 +485,7 @@ debversion_recv(PG_FUNCTION_ARGS)
                 (errcode(ERRCODE_INVALID_BINARY_REPRESENTATION),
                  errmsg("invalid input syntax for type debversion: contains null character")));
     }
+    pq_getmsgend(buf);
     debversion_validate(str, false, true, NULL);
     result = cstring_to_text_with_len(str, nbytes);
     pfree(str);
@@ -586,19 +649,19 @@ to_debversion(PG_FUNCTION_ARGS)
     text *txt = PG_GETARG_TEXT_PP(0);
     int len = VARSIZE_ANY_EXHDR(txt);
     char *str;
-    char *trimmed = NULL;
+    char *canonical = NULL;
     text *res;
 
-    if (memchr(VARDATA_ANY(txt), '\0', len) != NULL)
+    if (memchr(VARDATA_ANY(txt), 0, len) != NULL)
         ereport(ERROR,
                 (errcode(ERRCODE_INVALID_TEXT_REPRESENTATION),
                  errmsg("invalid input syntax for type %s: contains null character",
                         "debversion")));
 
     str = text_to_cstring(txt);
-    debversion_validate(str, true, true, &trimmed);
-    res = cstring_to_text(trimmed);
-    pfree(trimmed);
+    debversion_validate(str, true, true, &canonical);
+    res = cstring_to_text(canonical);
+    pfree(canonical);
     pfree(str);
 
     PG_RETURN_TEXT_P(res);
@@ -611,14 +674,33 @@ is_debversion(PG_FUNCTION_ARGS)
     text *txt = PG_GETARG_TEXT_PP(0);
     int len = VARSIZE_ANY_EXHDR(txt);
     char *str;
+    const char *p;
+    size_t slen;
+    char *trimmed;
     bool ok;
 
-    if (memchr(VARDATA_ANY(txt), '\0', len) != NULL)
+    if (memchr(VARDATA_ANY(txt), 0, len) != NULL)
         PG_RETURN_BOOL(false);
 
     str = text_to_cstring(txt);
-    ok = debversion_validate(str, false, false, NULL);
+    p = str;
+    while (*p && debver_isspace((unsigned char)*p))
+        p++;
+    slen = strlen(p);
+    while (slen > 0 && debver_isspace((unsigned char)p[slen - 1]))
+        slen--;
+
+    if (slen == 0)
+    {
+        pfree(str);
+        PG_RETURN_BOOL(false);
+    }
+
+    trimmed = pnstrdup(p, slen);
+    ok = debversion_validate(trimmed, false, false, NULL);
+    pfree(trimmed);
     pfree(str);
+
     PG_RETURN_BOOL(ok);
 }
 
@@ -629,17 +711,41 @@ text_to_debversion(PG_FUNCTION_ARGS)
     text *txt = PG_GETARG_TEXT_PP(0);
     int len = VARSIZE_ANY_EXHDR(txt);
     char *str;
+    const char *p;
+    size_t slen;
+    char *trimmed;
+    text *result;
 
-    if (memchr(VARDATA_ANY(txt), '\0', len) != NULL)
+    if (memchr(VARDATA_ANY(txt), 0, len) != NULL)
         ereport(ERROR,
                 (errcode(ERRCODE_INVALID_TEXT_REPRESENTATION),
                  errmsg("invalid input syntax for type %s: contains null character",
                         "debversion")));
 
     str = text_to_cstring(txt);
-    debversion_validate(str, false, true, NULL);
+    p = str;
+    while (*p && debver_isspace((unsigned char)*p))
+        p++;
+    slen = strlen(p);
+    while (slen > 0 && debver_isspace((unsigned char)p[slen - 1]))
+        slen--;
+
+    if (slen == 0)
+    {
+        pfree(str);
+        ereport(ERROR,
+                (errcode(ERRCODE_INVALID_TEXT_REPRESENTATION),
+                 errmsg("invalid input syntax for type %s: \"%s\"",
+                        "debversion", text_to_cstring(txt))));
+    }
+
+    trimmed = pnstrdup(p, slen);
+    debversion_validate(trimmed, false, true, NULL);
+    result = cstring_to_text_with_len(trimmed, slen);
+    pfree(trimmed);
     pfree(str);
-    PG_RETURN_POINTER(txt);
+
+    PG_RETURN_TEXT_P(result);
 }
 
 PG_FUNCTION_INFO_V1(debversion_to_text);

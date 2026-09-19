@@ -4,7 +4,7 @@ BEGIN;
 \i test/pgtap-core.sql
 CREATE EXTENSION pg_debver;
 
-SELECT plan(116);
+SELECT plan(139);
 
 -- 1. Type existence & NULLability
 SELECT has_type('debversion');
@@ -47,9 +47,9 @@ SELECT throws_ok(
 ) FROM unnest(ARRAY[
     '',
     '   ',
-    ' 1.0',
-    '1.0 ',
-    ' 1.0-1 ',
+    '1. 0',
+    '1.0 1.0',
+    ' 1.0-1 2 ',
     'v1.0',
     ':1.0',
     'a:1.0',
@@ -140,13 +140,29 @@ SELECT is(
 
 -- 7. Lax constructor & validator
 SELECT is( to_debversion('  1.0  '), '1.0'::debversion, 'to_debversion trims whitespace' );
-SELECT is( (to_debversion('v1.0'))::text, 'v1.0', 'to_debversion allows leading v' );
-SELECT is( (to_debversion('  v1.0-1  '))::text, 'v1.0-1', 'to_debversion trims and allows leading v' );
+SELECT is( to_debversion('v1.0'), '1.0'::debversion, 'to_debversion strips leading v' );
+SELECT is( to_debversion('V1.0'), '1.0'::debversion, 'to_debversion strips leading uppercase V' );
+SELECT is( to_debversion('v1.0') = '1.0'::debversion, true, 'to_debversion(v1.0) equals 1.0::debversion' );
+SELECT is( to_debversion('  v1.0-1  '), '1.0-1'::debversion, 'to_debversion trims and strips leading v' );
+SELECT is( to_debversion('  v2.1-3  '), '2.1-3'::debversion, 'to_debversion(  v2.1-3  ) returns 2.1-3' );
+SELECT is( to_debversion('v1:1.0'), '1:1.0'::debversion, 'to_debversion strips leading v before epoch' );
+SELECT is( to_debversion('1:v1.0'), '1:1.0'::debversion, 'to_debversion strips leading v before upstream with epoch' );
+SELECT is( to_debversion('v1:v1.0-1'), '1:1.0-1'::debversion, 'to_debversion strips v before both epoch and upstream' );
+SELECT is( to_debversion('V2:V1.0-1'), '2:1.0-1'::debversion, 'to_debversion strips uppercase V before epoch and upstream' );
+SELECT is( debversion_in(debversion_out(to_debversion('v1.0'))), '1.0'::debversion, 'debversion_in accepts output of to_debversion(v1.0)' );
+SELECT is( debversion_in(debversion_out(to_debversion('  v2.1-3  '))), '2.1-3'::debversion, 'debversion_in accepts output of to_debversion(  v2.1-3  )' );
 SELECT is( to_debversion('v1.0') < to_debversion('v2.0'), true, 'to_debversion comparison' );
+SELECT throws_ok( $$ SELECT to_debversion('v') $$, NULL, 'to_debversion rejects single v' );
+SELECT throws_ok( $$ SELECT to_debversion('va.b.c') $$, NULL, 'to_debversion rejects non-digit upstream after v' );
 SELECT is( is_debversion('1.0'), true, 'is_debversion valid' );
+SELECT is( is_debversion('  1.0  '), true, 'is_debversion accepts trimmed whitespace' );
 SELECT is( is_debversion('v1.0'), false, 'is_debversion rejects leading v in strict mode' );
+SELECT is( is_debversion('V1.0'), false, 'is_debversion rejects uppercase V in strict mode' );
+SELECT is( is_debversion('1:v1.0'), false, 'is_debversion rejects leading v before upstream' );
+SELECT is( is_debversion('v1:1.0'), false, 'is_debversion rejects leading v before epoch' );
 SELECT is( is_debversion('invalid@'), false, 'is_debversion rejects illegal chars' );
 SELECT is( is_debversion(''), false, 'is_debversion rejects empty string' );
+SELECT is( is_debversion('   '), false, 'is_debversion rejects whitespace-only string' );
 
 -- 8. Accessors
 SELECT is( get_debversion_epoch('1.0-1'::debversion), 0, 'epoch defaults to 0' );
@@ -170,6 +186,14 @@ CREATE TABLE deb_agg_test (v debversion);
 INSERT INTO deb_agg_test VALUES ('1.0-1'), ('1.2-1'), ('2.0-1'), ('1.0~rc1');
 SELECT is( min(v), '1.0~rc1'::debversion, 'min aggregate' ) FROM deb_agg_test;
 SELECT is( max(v), '2.0-1'::debversion, 'max aggregate' ) FROM deb_agg_test;
+SELECT is( proparallel::text, 's', 'min(debversion) is PARALLEL SAFE' )
+    FROM pg_proc WHERE oid = 'min(debversion)'::regprocedure;
+SELECT is( aggcombinefn, 'debversion_smaller'::regproc, 'min(debversion) has combinefunc debversion_smaller' )
+    FROM pg_aggregate WHERE aggfnoid = 'min(debversion)'::regprocedure;
+SELECT is( proparallel::text, 's', 'max(debversion) is PARALLEL SAFE' )
+    FROM pg_proc WHERE oid = 'max(debversion)'::regprocedure;
+SELECT is( aggcombinefn, 'debversion_larger'::regproc, 'max(debversion) has combinefunc debversion_larger' )
+    FROM pg_aggregate WHERE aggfnoid = 'max(debversion)'::regprocedure;
 
 -- 10. Opclasses & Indexes (B-tree and Hash)
 CREATE TABLE deb_idx_test (id int, v debversion);
@@ -202,6 +226,15 @@ SELECT lives_ok(
     $$ SELECT '[1.0-1,2.0-1]'::debversionrange $$,
     'debversionrange created'
 );
+SELECT lives_ok(
+    $$ SELECT '[1.0-1, 2.0-1]'::debversionrange $$,
+    'range literal with whitespace parses cleanly'
+);
+SELECT is(
+    '[1.0-1, 2.0-1]'::debversionrange @> '1.5'::debversion,
+    true,
+    'range with whitespace contains 1.5'
+);
 SELECT is(
     '[1.0-1,2.0-1]'::debversionrange @> '1.5'::debversion,
     true,
@@ -221,6 +254,10 @@ SELECT is(
 -- 12. Typecasts
 SELECT is( ('1.0-1'::debversion)::text, '1.0-1', 'debversion to text cast' );
 SELECT is( ('1.0-1'::text)::debversion, '1.0-1'::debversion, 'text to debversion cast' );
+CREATE TABLE deb_assign_test (v debversion);
+INSERT INTO deb_assign_test VALUES ('1.0-1');
+SELECT is( (SELECT v FROM deb_assign_test), '1.0-1'::debversion, 'INSERT succeeds with assignment cast from text' );
+DROP TABLE deb_assign_test;
 
 -- 13. Binary Send and Receive
 CREATE TABLE deb_bin_src (v debversion);

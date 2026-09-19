@@ -1,5 +1,5 @@
 \set ECHO none
-1..116
+1..139
 ok 1 - Type debversion should exist
 ok 2 - debversion should be NULLable
 ok 3 - "1.0" is a valid debversion
@@ -26,9 +26,9 @@ ok 23 - "20230101" is a valid debversion
 ok 24 - "1.0.0+dfsg-1" is a valid debversion
 ok 25 - "" is not a valid debversion
 ok 26 - "   " is not a valid debversion
-ok 27 - " 1.0" is not a valid debversion
-ok 28 - "1.0 " is not a valid debversion
-ok 29 - " 1.0-1 " is not a valid debversion
+ok 27 - "1. 0" is not a valid debversion
+ok 28 - "1.0 1.0" is not a valid debversion
+ok 29 - " 1.0-1 2 " is not a valid debversion
 ok 30 - "v1.0" is not a valid debversion
 ok 31 - ":1.0" is not a valid debversion
 ok 32 - "a:1.0" is not a valid debversion
@@ -81,38 +81,61 @@ ok 78 - hash_extended(0:1.0-1) = hash_extended(1.0-1)
 ok 79 - hash_extended(00:1.0-1) = hash_extended(1.0-1)
 ok 80 - hash_extended(1.0) = hash_extended(0:1.0)
 ok 81 - to_debversion trims whitespace
-ok 82 - to_debversion allows leading v
-ok 83 - to_debversion trims and allows leading v
-ok 84 - to_debversion comparison
-ok 85 - is_debversion valid
-ok 86 - is_debversion rejects leading v in strict mode
-ok 87 - is_debversion rejects illegal chars
-ok 88 - is_debversion rejects empty string
-ok 89 - epoch defaults to 0
-ok 90 - epoch returns 2
-ok 91 - epoch returns 3 for 003
-ok 92 - upstream returns 1.0
-ok 93 - upstream with epoch/tilde
-ok 94 - revision returns 1
-ok 95 - revision returns ubuntu1
-ok 96 - native package revision is NULL
-ok 97 - epoch with 35 zeros returns 0
-ok 98 - epoch with 35 zeros and 5 returns 5
-ok 99 - epoch exceeding 31-bit range throws error
-ok 100 - min aggregate
-ok 101 - max aggregate
-ok 102 - hash index lookup with epoch normalization
-ok 103 - btree index sort order
-ok 104 - hash partitioning routes equivalent versions to same partition
-ok 105 - debversionrange created
-ok 106 - range contains 1.5
-ok 107 - range does not contain 2.5
-ok 108 - constructor range contains 1.5
-ok 109 - debversion to text cast
-ok 110 - text to debversion cast
-ok 111 - Function debversion_send() should return bytea
-ok 112 - Function debversion_recv(internal) should exist
-ok 113 - Function debversion_recv() should return debversion
-ok 114 - binary copy preserves debversion values
-ok 115 - unprivileged user can use debversion
-ok 116 - unprivileged user can compare debversions
+ok 82 - to_debversion strips leading v
+ok 83 - to_debversion strips leading uppercase V
+ok 84 - to_debversion(v1.0) equals 1.0::debversion
+ok 85 - to_debversion trims and strips leading v
+ok 86 - to_debversion(  v2.1-3  ) returns 2.1-3
+ok 87 - to_debversion strips leading v before epoch
+ok 88 - to_debversion strips leading v before upstream with epoch
+ok 89 - to_debversion strips v before both epoch and upstream
+ok 90 - to_debversion strips uppercase V before epoch and upstream
+ok 91 - debversion_in accepts output of to_debversion(v1.0)
+ok 92 - debversion_in accepts output of to_debversion(  v2.1-3  )
+ok 93 - to_debversion comparison
+ok 94 - to_debversion rejects single v
+ok 95 - to_debversion rejects non-digit upstream after v
+ok 96 - is_debversion valid
+ok 97 - is_debversion accepts trimmed whitespace
+ok 98 - is_debversion rejects leading v in strict mode
+ok 99 - is_debversion rejects uppercase V in strict mode
+ok 100 - is_debversion rejects leading v before upstream
+ok 101 - is_debversion rejects leading v before epoch
+ok 102 - is_debversion rejects illegal chars
+ok 103 - is_debversion rejects empty string
+ok 104 - is_debversion rejects whitespace-only string
+ok 105 - epoch defaults to 0
+ok 106 - epoch returns 2
+ok 107 - epoch returns 3 for 003
+ok 108 - upstream returns 1.0
+ok 109 - upstream with epoch/tilde
+ok 110 - revision returns 1
+ok 111 - revision returns ubuntu1
+ok 112 - native package revision is NULL
+ok 113 - epoch with 35 zeros returns 0
+ok 114 - epoch with 35 zeros and 5 returns 5
+ok 115 - epoch exceeding 31-bit range throws error
+ok 116 - min aggregate
+ok 117 - max aggregate
+ok 118 - min(debversion) is PARALLEL SAFE
+ok 119 - min(debversion) has combinefunc debversion_smaller
+ok 120 - max(debversion) is PARALLEL SAFE
+ok 121 - max(debversion) has combinefunc debversion_larger
+ok 122 - hash index lookup with epoch normalization
+ok 123 - btree index sort order
+ok 124 - hash partitioning routes equivalent versions to same partition
+ok 125 - debversionrange created
+ok 126 - range literal with whitespace parses cleanly
+ok 127 - range with whitespace contains 1.5
+ok 128 - range contains 1.5
+ok 129 - range does not contain 2.5
+ok 130 - constructor range contains 1.5
+ok 131 - debversion to text cast
+ok 132 - text to debversion cast
+ok 133 - INSERT succeeds with assignment cast from text
+ok 134 - Function debversion_send() should return bytea
+ok 135 - Function debversion_recv(internal) should exist
+ok 136 - Function debversion_recv() should return debversion
+ok 137 - binary copy preserves debversion values
+ok 138 - unprivileged user can use debversion
+ok 139 - unprivileged user can compare debversions
