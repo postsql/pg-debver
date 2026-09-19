@@ -62,3 +62,8 @@ CREATE INDEX idx_packages_ver_hash ON packages USING hash (version);
 ## License
 
 PostgreSQL License (extension scaffolding and PostgreSQL bindings) and Novell BSD-3-Clause License (`src/debver_evr.*` libsolv comparison algorithm). See [LICENSE](LICENSE) for details.
+
+## Security
+
+To report a vulnerability or read our security process and response timelines, please review the [Security Policy](security-policy.md).
+
