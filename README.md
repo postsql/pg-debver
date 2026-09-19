@@ -59,6 +59,12 @@ CREATE INDEX idx_packages_ver_btree ON packages USING btree (version);
 CREATE INDEX idx_packages_ver_hash ON packages USING hash (version);
 ```
 
+## Lineage
+
+This extension was originally started as a patch to add [Debian Policy Manual §5.6.12](https://www.debian.org/doc/debian-policy/ch-controlfields.html#version) support to [pg-semver](https://github.com/theory/pg-semver) (available at [https://github.com/postsql/pg-semver-with-debver/tree/with-debverr](https://github.com/postsql/pg-semver-with-debver/tree/with-debverr)), but was extracted into a separate extension when the code overlap turned out to be minimal.
+
+The available functionality should be very similar.
+
 ## License
 
 PostgreSQL License (extension scaffolding and PostgreSQL bindings) and Novell BSD-3-Clause License (`src/debver_evr.*` libsolv comparison algorithm). See [LICENSE](LICENSE) for details.
